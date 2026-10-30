@@ -48,6 +48,26 @@ The normal pre-schema backup is retained. JSON export/import preserves balances;
 outstanding holds are exported as estimated usage, and restoring is refused while
 metered requests are running. Tests use temporary databases and synthetic upstreams.
 
+Token allowance verification on 2026-10-30:
+
+- 205 tests passed in 15 suites, covering accounting, concurrent admission,
+  monthly rollover, retries, cancellation, backup import/export and access controls.
+- Headless Chrome plus a local HTTP provider verified create/edit, manual additions,
+  non-streaming/SSE debits, exhaustion before upstream dispatch and quota display.
+  Screenshots were visually inspected. Revit's existing balance adapter passed
+  19 Python tests and its usage-display JavaScript tests.
+- [Production build](https://github.com/duongf7/9router/actions/runs/41081403631)
+  at `cbb219daea9416faa9ccd74fdd8b7f7af8dab31b` passed and was deployed to the
+  owner's VPS, retaining product version `0.5.112`. Copied-data migration and
+  packaged HTTP checks passed before the switch.
+- Temporary keys on the live Claude and Codex accounts verified actual token
+  debits against usage history, exhaustion and top-ups. Those test keys were
+  deleted; the 7 customer keys, their assignments and unlimited defaults remain
+  unchanged. No Revit client installation was replaced during this update.
+- Previous image/container were removed after verification as requested. Data
+  and configuration backup remains at
+  `/opt/9router-deployments/cbb219da/before-update`.
+
 ## Configure a customer
 
 1. Add the customer's subscription account under **Providers**.
