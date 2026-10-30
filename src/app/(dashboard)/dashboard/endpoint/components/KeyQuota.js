@@ -17,7 +17,7 @@ export default function KeyQuota({ keyId }) {
     finally { setBusy(false); }
   };
   return <div className="mt-2 space-y-2">
-    <button className="text-xs text-primary underline" disabled={busy} onClick={load}>{busy ? "Loading quota…" : snapshot ? "Refresh quota" : "View subscription quota"}</button>
+    <button className="text-xs text-primary underline" disabled={busy} onClick={load}>{busy ? "Loading quota…" : snapshot ? "Refresh quota" : "View quota"}</button>
     {error && <p role="alert" className="text-xs text-red-500">{error}</p>}
     <QuotaSummary snapshot={snapshot} />
   </div>;

@@ -115,13 +115,19 @@ export function formatDoneLine({ usage, latency }) {
   return `DONE ${latency?.total ?? 0}ms${ttftStr} · ${inStr} · OUT ${outTok}`;
 }
 
-export function saveUsageStats({ provider, model, tokens, connectionId, apiKey, endpoint, label = "USAGE", silent = false }) {
+export function saveUsageStats({ provider, model, tokens, connectionId, apiKey, endpoint, onTokenUsage, label = "USAGE", silent = false }) {
   if (!tokens || typeof tokens !== "object") return;
 
   const inTokens = tokens.input_tokens ?? tokens.prompt_tokens ?? 0;
   const outTokens = tokens.output_tokens ?? tokens.completion_tokens ?? 0;
 
-  if (inTokens === 0 && outTokens === 0) return;
+  if (inTokens === 0 && outTokens === 0 && !tokens.cache_read_input_tokens && !tokens.cache_creation_input_tokens) {
+    // Explicit zero usage is different from a missing receipt.
+    if ([tokens.input_tokens, tokens.prompt_tokens, tokens.output_tokens, tokens.completion_tokens].some(v => typeof v === "number")) {
+      onTokenUsage?.(tokens, tokens.estimated === true);
+    }
+    return;
+  }
 
   if (!silent) {
     const time = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -135,6 +141,8 @@ export function saveUsageStats({ provider, model, tokens, connectionId, apiKey, 
     prompt_tokens: tokens.prompt_tokens ?? tokens.input_tokens ?? 0,
     completion_tokens: tokens.completion_tokens ?? tokens.output_tokens ?? 0
   };
+
+  onTokenUsage?.(normalized, tokens.estimated === true);
 
   saveRequestUsage({
     provider: provider || "unknown",

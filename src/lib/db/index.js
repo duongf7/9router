@@ -5,6 +5,7 @@ import { keyAccessFromColumns, keyAccessToColumns, validateKeyAccessInput } from
 import { KEY_ACCESS_UNRESTRICTED } from "@/shared/constants/keyAccess.js";
 
 import { connectionAccessFromColumns, connectionAccessToColumns } from "@/shared/utils/connectionAccess.js";
+import { parseTokenBudget } from "@/shared/utils/tokenBudget.js";
 
 // Settings
 export {
@@ -75,13 +76,21 @@ export {
 export async function exportDb() {
   const db = await getAdapter();
   const { exportSettings } = await import("./repos/settingsRepo.js");
+  const exportTokenBudget = row => {
+    const state = parseTokenBudget(row.tokenBudget);
+    if (!state) return null;
+    // A backup has no live upstream streams to reconcile. Preserve outstanding
+    // holds conservatively as used tokens rather than restoring free allowance.
+    const reserved = db.get("SELECT COALESCE(SUM(amount),0) AS n FROM tokenReservations WHERE keyId = ? AND periodStart = ? AND state = 'reserved'", [row.id, state.periodStart]).n;
+    return { ...state, used: state.used + reserved };
+  };
 
   const out = {
     settings: await exportSettings(),
     providerConnections: db.all(`SELECT * FROM providerConnections`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, provider: r.provider, authType: r.authType, name: r.name, email: r.email, priority: r.priority, isActive: r.isActive === 1, createdAt: r.createdAt, updatedAt: r.updatedAt })),
     providerNodes: db.all(`SELECT * FROM providerNodes`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, type: r.type, name: r.name, createdAt: r.createdAt, updatedAt: r.updatedAt })),
     proxyPools: db.all(`SELECT * FROM proxyPools`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, isActive: r.isActive === 1, testStatus: r.testStatus, createdAt: r.createdAt, updatedAt: r.updatedAt })),
-    apiKeys: db.all(`SELECT * FROM apiKeys`).map((r) => ({ id: r.id, key: r.key, name: r.name, machineId: r.machineId, isActive: r.isActive === 1, createdAt: r.createdAt, access: keyAccessFromColumns(r.accessRestricted, r.accessAllow), connectionAccess: connectionAccessFromColumns(r.connectionAccessRestricted, r.connectionAccessAllow) })),
+    apiKeys: db.all(`SELECT * FROM apiKeys`).map((r) => ({ id: r.id, key: r.key, name: r.name, machineId: r.machineId, isActive: r.isActive === 1, createdAt: r.createdAt, access: keyAccessFromColumns(r.accessRestricted, r.accessAllow), connectionAccess: connectionAccessFromColumns(r.connectionAccessRestricted, r.connectionAccessAllow), tokenBudget: exportTokenBudget(r) })),
     combos: db.all(`SELECT * FROM combos`).map((r) => ({ id: r.id, name: r.name, kind: r.kind, models: parseJson(r.models, []), createdAt: r.createdAt, updatedAt: r.updatedAt })),
     modelAliases: {},
     customModels: [],
@@ -104,12 +113,16 @@ export async function importDb(payload) {
   const db = await getAdapter();
 
   db.transaction(() => {
+    if (db.get("SELECT COUNT(*) AS n FROM tokenReservations WHERE state = 'reserved' AND expiresAt > ?", [Date.now()]).n) {
+      throw new Error("Wait for token-limited requests to finish before restoring the database.");
+    }
     // Wipe all tables (keep _meta)
     db.run(`DELETE FROM settings`);
     db.run(`DELETE FROM providerConnections`);
     db.run(`DELETE FROM providerNodes`);
     db.run(`DELETE FROM proxyPools`);
     db.run(`DELETE FROM apiKeys`);
+    db.run(`DELETE FROM tokenReservations`);
     db.run(`DELETE FROM combos`);
     db.run(`DELETE FROM kv WHERE scope IN ('modelAliases', 'customModels', 'mitmAlias', 'pricing')`);
 
@@ -150,9 +163,10 @@ export async function importDb(payload) {
       }
       const cols = keyAccessToColumns(access);
       const connCols = connectionAccessToColumns(k.connectionAccess);
+      const budget = parseTokenBudget(k.tokenBudget);
       db.run(
-        `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, createdAt, accessRestricted, accessAllow, connectionAccessRestricted, connectionAccessAllow) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [k.id, k.key, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, k.createdAt || new Date().toISOString(), cols.accessRestricted, cols.accessAllow, connCols.connectionAccessRestricted, connCols.connectionAccessAllow]
+        `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, createdAt, accessRestricted, accessAllow, connectionAccessRestricted, connectionAccessAllow, tokenBudget) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [k.id, k.key, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, k.createdAt || new Date().toISOString(), cols.accessRestricted, cols.accessAllow, connCols.connectionAccessRestricted, connCols.connectionAccessAllow, budget ? JSON.stringify(budget) : null]
       );
     }
     for (const c of payload.combos || []) {

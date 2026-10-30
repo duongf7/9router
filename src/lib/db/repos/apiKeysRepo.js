@@ -3,6 +3,8 @@ import { getAdapter } from "../driver.js";
 import { keyAccessFromColumns, keyAccessToColumns } from "@/shared/utils/keyAccess.js";
 import { KEY_ACCESS_UNRESTRICTED } from "@/shared/constants/keyAccess.js";
 import { connectionAccessFromColumns, connectionAccessToColumns } from "@/shared/utils/connectionAccess.js";
+import { parseTokenBudget } from "@/shared/utils/tokenBudget.js";
+import { configureTokenBudget, getTokenBudget } from "./tokenBudgetRepo.js";
 
 function rowToKey(row) {
   if (!row) return null;
@@ -15,13 +17,14 @@ function rowToKey(row) {
     createdAt: row.createdAt,
     access: keyAccessFromColumns(row.accessRestricted, row.accessAllow),
     connectionAccess: connectionAccessFromColumns(row.connectionAccessRestricted, row.connectionAccessAllow),
+    tokenBudget: parseTokenBudget(row.tokenBudget) || { mode: "none" },
   };
 }
 
 export async function getApiKeys() {
   const db = await getAdapter();
   const rows = db.all(`SELECT * FROM apiKeys ORDER BY createdAt ASC`);
-  return rows.map(rowToKey);
+  return Promise.all(rows.map(async row => ({ ...rowToKey(row), tokenBudget: await getTokenBudget(row.id) })));
 }
 
 export async function getApiKeyById(id) {
@@ -38,7 +41,7 @@ export async function getApiKeyByKey(key) {
   return rowToKey(row);
 }
 
-export async function createApiKey(name, machineId, connectionAccess = { restricted: true, allow: [] }) {
+export async function createApiKey(name, machineId, connectionAccess = { restricted: true, allow: [] }, tokenBudget) {
   if (!machineId) throw new Error("machineId is required");
   const db = await getAdapter();
   const { generateApiKeyWithMachine } = await import("@/shared/utils/apiKey");
@@ -55,11 +58,14 @@ export async function createApiKey(name, machineId, connectionAccess = { restric
   };
   const cols = keyAccessToColumns(KEY_ACCESS_UNRESTRICTED);
   const connCols = connectionAccessToColumns(connectionAccess);
-  db.run(
-    `INSERT INTO apiKeys(id, key, name, machineId, isActive, createdAt, accessRestricted, accessAllow, connectionAccessRestricted, connectionAccessAllow) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [apiKey.id, apiKey.key, apiKey.name, apiKey.machineId, 1, apiKey.createdAt, cols.accessRestricted, cols.accessAllow, connCols.connectionAccessRestricted, connCols.connectionAccessAllow]
-  );
-  return apiKey;
+  db.transaction(() => {
+    db.run(
+      `INSERT INTO apiKeys(id, key, name, machineId, isActive, createdAt, accessRestricted, accessAllow, connectionAccessRestricted, connectionAccessAllow) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [apiKey.id, apiKey.key, apiKey.name, apiKey.machineId, 1, apiKey.createdAt, cols.accessRestricted, cols.accessAllow, connCols.connectionAccessRestricted, connCols.connectionAccessAllow]
+    );
+    if (tokenBudget !== undefined) configureTokenBudget(db, apiKey.id, tokenBudget);
+  });
+  return { ...apiKey, tokenBudget: await getTokenBudget(apiKey.id) };
 }
 
 export async function updateApiKey(id, data) {
@@ -75,6 +81,7 @@ export async function updateApiKey(id, data) {
       `UPDATE apiKeys SET key = ?, name = ?, machineId = ?, isActive = ?, accessRestricted = ?, accessAllow = ?, connectionAccessRestricted = ?, connectionAccessAllow = ? WHERE id = ?`,
       [merged.key, merged.name, merged.machineId, merged.isActive ? 1 : 0, cols.accessRestricted, cols.accessAllow, connCols.connectionAccessRestricted, connCols.connectionAccessAllow, id]
     );
+    if (data.tokenBudget !== undefined) configureTokenBudget(db, id, data.tokenBudget);
     result = rowToKey(db.get(`SELECT * FROM apiKeys WHERE id = ?`, [id]));
   });
   return result;
@@ -82,8 +89,11 @@ export async function updateApiKey(id, data) {
 
 export async function deleteApiKey(id) {
   const db = await getAdapter();
-  const res = db.run(`DELETE FROM apiKeys WHERE id = ?`, [id]);
-  return (res?.changes ?? 0) > 0;
+  return db.transaction(() => {
+    db.run("DELETE FROM tokenReservations WHERE keyId = ?", [id]);
+    const res = db.run(`DELETE FROM apiKeys WHERE id = ?`, [id]);
+    return (res?.changes ?? 0) > 0;
+  });
 }
 
 export async function validateApiKey(key) {

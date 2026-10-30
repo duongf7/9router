@@ -1,4 +1,5 @@
 import { handleChat } from "@/sse/handlers/chat.js";
+import { rejectNonChatTokenBudget } from "@/lib/usage/tokenBudgetEndpoints.js";
 import {
   clearAccountError,
   getProviderCredentials,
@@ -86,6 +87,8 @@ export async function POST(request, { params }) {
     const body = await request.json();
 
     if (isGeminiNativeTtsRequest(model, body)) {
+      const denied = await rejectNonChatTokenBudget(request, true);
+      if (denied) return denied;
       return await forwardGeminiNativeRequest(request, body, model, action);
     }
 

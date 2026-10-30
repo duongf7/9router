@@ -21,12 +21,16 @@ import SecurityWarning from "./components/SecurityWarning";
 import ConnectionAccessEditor from "./components/ConnectionAccessEditor";
 import ConnectionAccessControls from "./components/ConnectionAccessControls";
 import KeyQuota from "./components/KeyQuota";
+import TokenBudgetEditor from "./components/TokenBudgetEditor";
+import TokenBudgetControls from "./components/TokenBudgetControls";
+import { validateTokenBudget } from "@/shared/utils/tokenBudget.js";
 import KeyAccessControls from "./components/KeyAccessControls";
 export default function APIPageClient({ machineId }) {
   const [keys, setKeys] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [newKeyName, setNewKeyName] = useState("");
+  const [newTokenBudget, setNewTokenBudget] = useState({ mode: "none", limit: 0 });
   const [newConnectionAccess, setNewConnectionAccess] = useState({ restricted: true, allow: [] });
   const [keyError, setKeyError] = useState("");
   const [creatingKey, setCreatingKey] = useState(false);
@@ -630,13 +634,14 @@ export default function APIPageClient({ machineId }) {
       const res = await fetch("/api/keys", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newKeyName, connectionAccess: newConnectionAccess }),
+        body: JSON.stringify({ name: newKeyName, connectionAccess: newConnectionAccess, tokenBudget: newTokenBudget }),
       });
       const data = await res.json();
 
       if (res.ok) {
         setCreatedKey(data.key);
         setNewConnectionAccess({ restricted: true, allow: [] });
+        setNewTokenBudget({ mode: "none", limit: 0 });
         await fetchData();
         setNewKeyName("");
         setShowAddModal(false);
@@ -1077,7 +1082,8 @@ export default function APIPageClient({ machineId }) {
                     <p className="text-xs text-orange-500 mt-1">Paused</p>
                   )}
                   <ConnectionAccessControls apiKey={key} onSave={access => handleUpdateConnectionAccess(key.id, access)} />
-                  <KeyQuota key={`${key.id}:${JSON.stringify(key.connectionAccess)}`} keyId={key.id} />
+                  <TokenBudgetControls apiKey={key} onUpdate={updated => setKeys(prev => prev.map(k => k.id === key.id ? updated : k))} />
+                  <KeyQuota key={`${key.id}:${JSON.stringify(key.connectionAccess)}:${JSON.stringify(key.tokenBudget)}`} keyId={key.id} />
                   <KeyAccessControls
                     apiKey={key}
                     onChange={(access) => handleUpdateKeyAccess(key.id, access)}
@@ -1141,9 +1147,10 @@ export default function APIPageClient({ machineId }) {
             placeholder="Production Key"
           />
           {showAddModal && <ConnectionAccessEditor value={newConnectionAccess} onChange={setNewConnectionAccess} />}
+          <TokenBudgetEditor value={newTokenBudget} onChange={setNewTokenBudget} />
           {keyError && <p role="alert" className="text-sm text-red-500">{keyError}</p>}
           <div className="flex gap-2">
-            <Button onClick={handleCreateKey} fullWidth disabled={!newKeyName.trim() || creatingKey || (newConnectionAccess.restricted && newConnectionAccess.allow.length === 0)}>
+            <Button onClick={handleCreateKey} fullWidth disabled={!newKeyName.trim() || creatingKey || !validateTokenBudget(newTokenBudget).ok || (newConnectionAccess.restricted && newConnectionAccess.allow.length === 0)}>
               Create
             </Button>
             <Button

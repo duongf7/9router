@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { deleteApiKey, getApiKeyById, updateApiKey } from "@/lib/localDb";
 import { validateKeyAccessInput } from "@/shared/utils/keyAccess.js";
 import { validateAssignedAccounts } from "@/lib/validateConnectionAccess.js";
+import { validateTokenBudget } from "@/shared/utils/tokenBudget.js";
+import { getTokenBudget, TokenBudgetError } from "@/lib/db/repos/tokenBudgetRepo.js";
 
 // GET /api/keys/[id] - Get single key
 export async function GET(request, { params }) {
@@ -11,7 +13,7 @@ export async function GET(request, { params }) {
     if (!key) {
       return NextResponse.json({ error: "Key not found" }, { status: 404 });
     }
-    return NextResponse.json({ key });
+    return NextResponse.json({ key: { ...key, tokenBudget: await getTokenBudget(id) } });
   } catch (error) {
     console.log("Error fetching key:", error);
     return NextResponse.json({ error: "Failed to fetch key" }, { status: 500 });
@@ -31,6 +33,11 @@ export async function PUT(request, { params }) {
     }
 
     const updateData = {};
+    if (body.tokenBudget !== undefined) {
+      const checked = validateTokenBudget(body.tokenBudget);
+      if (!checked.ok) return NextResponse.json({ error: checked.error }, { status: 400 });
+      updateData.tokenBudget = checked.value;
+    }
     if (connectionAccess !== undefined) {
       const checked = await validateAssignedAccounts(connectionAccess);
       if (!checked.ok) return NextResponse.json({ error: checked.error }, { status: 400 });
@@ -45,8 +52,9 @@ export async function PUT(request, { params }) {
 
     const updated = await updateApiKey(id, updateData);
 
-    return NextResponse.json({ key: updated });
+    return NextResponse.json({ key: { ...updated, tokenBudget: await getTokenBudget(id) } });
   } catch (error) {
+    if (error instanceof TokenBudgetError) return NextResponse.json({ error: error.message }, { status: error.status });
     console.log("Error updating key:", error);
     return NextResponse.json({ error: "Failed to update key" }, { status: 500 });
   }

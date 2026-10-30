@@ -14,7 +14,7 @@ export default function QuotaSummary({ snapshot }) {
   return <div className="space-y-2 text-xs" data-testid="quota-summary">
     {message && <p className="text-text-muted">{message}</p>}
     {snapshot.accounts.map((account, index) => <div key={account.id} className="rounded border border-black/10 dark:border-white/10 p-2 space-y-1">
-      <p className="font-medium">{account.provider} · Account {index + 1}</p>
+      <p className="font-medium">{snapshot.kind === "token_allowance" ? "Token allowance" : `${account.provider} · Account ${index + 1}`}</p>
       {account.status !== "available" && <p className="text-text-muted">{account.status === "paused" ? "Account paused" : "Quota unavailable"}</p>}
       {account.limits.map(limit => <div key={limit.label}>
         <div className="flex justify-between gap-3"><span>{limit.label}</span><span>{balance(limit)}</span></div>
@@ -23,6 +23,6 @@ export default function QuotaSummary({ snapshot }) {
       </div>)}
       {account.updatedAt && <p className="text-text-muted">Updated {new Date(account.updatedAt).toLocaleTimeString()}</p>}
     </div>)}
-    {snapshot.accounts.length > 0 && <p className="text-text-muted">Subscription balance includes usage outside this key.</p>}
+    {snapshot.accounts.length > 0 && snapshot.kind !== "token_allowance" && <p className="text-text-muted">Subscription balance includes usage outside this key.</p>}
   </div>;
 }

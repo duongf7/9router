@@ -1,5 +1,53 @@
 # Customer account isolation and quota
 
+## Issue a token allowance
+
+In **Endpoint → API Keys**, choose **Token allowance → Edit** for a key:
+
+- **No token limit** keeps the existing subscription-quota behavior.
+- **Monthly** sets an input-plus-output allowance renewed on the first day of
+  each calendar month at 00:00 UTC. Unused tokens and manual additions expire
+  at that reset; the recurring allowance is renewed without carryover.
+- **Until used up** has no reset date.
+
+The key row shows used and remaining tokens. **Add tokens** adds to the current
+balance without changing the recurring allowance. Editing a limit, renaming or
+rotating a key, or changing its assigned accounts does not erase recorded usage.
+Existing keys remain unlimited until the administrator enables an allowance.
+
+Customer `GET /v1/quota` reads show this allowance in tokens when configured,
+using the existing schema with `kind: token_allowance`. The Revit footer already
+supports this balance shape; no additional customer configuration is required.
+Without an allowance, the endpoint continues to return assigned-account quotas.
+Subscription limits and assigned-account boundaries still apply independently.
+
+The first supported scope is chat/agent traffic through Chat Completions,
+Messages, Responses/compact and Gemini text generation. Non-chat endpoints,
+including image/audio generation and native Gemini TTS, reject token-limited
+keys instead of allowing unmetered use. Unlimited keys keep their existing behavior.
+
+Usage is normalized to total input (including cached input) plus output; cache
+and reasoning subsets are not added twice. Each upstream attempt reserves input
+estimated from the request and an output allowance in SQLite, then reconciles a
+unique receipt. Concurrent calls cannot spend the same reservation. Definite
+upstream rejections release their holds; retries do not duplicate a receipt.
+The token counter is separate from deletable usage-history statistics.
+
+This is an admission limit, not a guarantee of an exact upstream token ceiling:
+input size is estimated and some subscription APIs (including Codex) reject
+output-limit parameters. A completing request can exceed its reservation; all
+reported consumption is recorded and subsequent calls are blocked until enough
+tokens are added or the monthly allowance resets. Missing receipts/disconnects
+are settled conservatively from the hold; estimated stream receipts use the
+existing estimator without its client-facing context safety buffer. Orphaned
+holds expire after two hours and remain charged until a late actual receipt
+reconciles them. No third-party billing service is introduced.
+
+Schema version 4 adds a nullable `apiKeys.tokenBudget` and a reservation table.
+The normal pre-schema backup is retained. JSON export/import preserves balances;
+outstanding holds are exported as estimated usage, and restoring is refused while
+metered requests are running. Tests use temporary databases and synthetic upstreams.
+
 ## Configure a customer
 
 1. Add the customer's subscription account under **Providers**.

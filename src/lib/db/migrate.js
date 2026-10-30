@@ -8,6 +8,7 @@ import { makeBackupDir, backupFile, backupDbLite, pruneOldBackups } from "./back
 import { getAppVersion } from "./version.js";
 import { stringifyJson } from "./helpers/jsonCol.js";
 import { connectionAccessToColumns } from "@/shared/utils/connectionAccess.js";
+import { parseTokenBudget } from "@/shared/utils/tokenBudget.js";
 
 // Marker file: prevents re-importing legacy JSON when user wipes data.sqlite.
 const MIGRATED_MARKER = path.join(DB_DIR, ".migrated-from-json");
@@ -143,9 +144,10 @@ function importLegacyMain(adapter, data) {
 
   importWithAssertion(adapter, "apiKeys", data.apiKeys || [], (k) => {
     const scope = connectionAccessToColumns(k.connectionAccess);
+    const budget = parseTokenBudget(k.tokenBudget);
     adapter.run(
-      `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, createdAt, connectionAccessRestricted, connectionAccessAllow) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
-      [k.id, k.key, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, k.createdAt || new Date().toISOString(), scope.connectionAccessRestricted, scope.connectionAccessAllow]
+      `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, createdAt, connectionAccessRestricted, connectionAccessAllow, tokenBudget) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [k.id, k.key, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, k.createdAt || new Date().toISOString(), scope.connectionAccessRestricted, scope.connectionAccessAllow, budget ? JSON.stringify(budget) : null]
     );
   }, (k) => ({ id: k.id ?? null, name: k.name ?? null }));
 

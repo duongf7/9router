@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { getProviderConnections } from "@/lib/db/repos/connectionsRepo.js";
 import { readProviderUsage } from "./providerUsage.js";
+import { getTokenBudget } from "@/lib/db/repos/tokenBudgetRepo.js";
 import { CUSTOMER_QUOTA_SCHEMA_VERSION, CUSTOMER_QUOTA_CACHE_MS, CUSTOMER_QUOTA_TIMEOUT_MS,
   CUSTOMER_QUOTA_CACHE_SIZE, CUSTOMER_QUOTA_CONCURRENCY } from "@/shared/constants/customerQuota.js";
 
@@ -73,6 +74,20 @@ export async function getCustomerQuota(key) {
   const result = { schemaVersion: CUSTOMER_QUOTA_SCHEMA_VERSION, source: "9router",
     status: "unavailable", reason: null, accounts: [] };
   if (!key || key.isActive === false) { result.reason = "inactive_key"; return result; }
+  if (key.tokenBudget && key.tokenBudget.mode !== "none") {
+    const budget = await getTokenBudget(key.id);
+    if (budget.mode !== "none") {
+      // Reuse the existing balance contract so deployed clients can show tokens
+      // immediately, without mixing this allowance with subscription percentages.
+      return { ...result, status: "available", kind: "token_allowance", accounts: [{
+        id: createHash("sha256").update(`${key.id}:token-allowance`).digest("hex").slice(0, 16),
+        provider: "allowance", status: "available", updatedAt: new Date().toISOString(),
+        limits: [{ label: "Tokens", unit: "tokens", remaining: budget.remaining,
+          total: budget.total, remainingPercent: 100 * budget.remaining / budget.total,
+          resetAt: budget.resetAt, unlimited: false }],
+      }] };
+    }
+  }
   if (key.connectionAccess?.restricted !== true) {
     result.reason = "account_assignment_required";
     return result;

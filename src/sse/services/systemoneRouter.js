@@ -2,6 +2,8 @@ import { getModelInfo } from "../services/model.js";
 import { getProviderCredentials } from "../services/auth.js";
 import { checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { handleSystemoneCore } from "open-sse/handlers/systemoneCore.js";
+import { withTokenBudget } from "@/lib/usage/tokenBudgetChat.js";
+import { extractClientApiKey } from "@/shared/utils/clientApiKey.js";
 import {
   DEFAULT_SYSTEMONE_ROUTER_MODEL,
   DEFAULT_SYSTEMONE_TIMEOUT_MS,
@@ -81,12 +83,18 @@ export async function resolveSmartChoice({
       timeoutId = setTimeout(() => reject(new Error(`System One router timed out after ${timeoutMs}ms`)), timeoutMs);
     });
 
-    const corePromise = handleSystemoneCore({
+    const corePromise = withTokenBudget({
+      apiKey: extractClientApiKey(request),
       body: systemoneBody,
       modelInfo: { provider, model },
       credentials: refreshedCredentials,
       log,
       onRequestSuccess: () => {},
+    }, async options => {
+      options.tokenBudgetAttempt?.markStarted();
+      const result = await handleSystemoneCore(options);
+      if (result.usage) options.onTokenUsage?.(result.usage);
+      return result;
     });
 
     let result;
