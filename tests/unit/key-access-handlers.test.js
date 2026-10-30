@@ -189,6 +189,11 @@ describe.each(handlers)("%s handler is wired", (_name, call, allowed, denied) =>
     const r = await call(allowed, "sk-media");
     expect(r.status).not.toBe(403);
     expect(mocks.getProviderCredentials).toHaveBeenCalled();
+    // Model permission alone is not enough: every modality must carry the
+    // authenticated request through to the account-scoped credential selector.
+    for (const args of mocks.getProviderCredentials.mock.calls) {
+      expect(args[3].request.headers.get("Authorization")).toBe("Bearer sk-media");
+    }
   });
   it("leaves an unrestricted key alone", async () => {
     const r = await call(denied, "sk-open");

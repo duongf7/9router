@@ -50,6 +50,7 @@ logs/*
 source/*
 .cursor/*
 docs/*
+!docs/customer-account-quota.md
 !docs/ARCHITECTURE.md
 test/*
 open-sse/test/*

@@ -8,11 +8,17 @@
 
 # Dependencies and build output
 node_modules
+**/node_modules
 .next
 out
 build
 dist
 coverage
+.scratch
+.claude
+.docs
+.repo
+.script
 
 # Runtime data and logs
 data

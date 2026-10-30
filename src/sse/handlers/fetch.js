@@ -1,3 +1,4 @@
+import { denyUnassignedPublicProvider } from "../services/connectionAccess.js";
 import {
   getProviderCredentials,
   markAccountUnavailable,
@@ -142,6 +143,8 @@ async function handleSingleProviderFetch(body, providerInput, request, apiKey, s
 
   // No-auth fetch path (kept for parity though no current fetch provider sets noAuth)
   if (resolvedProvider.noAuth) {
+    const accountDenied = await denyUnassignedPublicProvider(request);
+    if (accountDenied) return accountDenied;
     log.info("AUTH", `\x1b[32m${providerId} no-auth mode\x1b[0m`);
     const result = await handleFetchCore({
       url: targetUrl,
@@ -171,7 +174,7 @@ async function handleSingleProviderFetch(body, providerInput, request, apiKey, s
   const fetchLockKey = `webfetch:${providerId}`;
 
   while (true) {
-    const credentials = await getProviderCredentials(providerId, excludeConnectionIds, fetchLockKey);
+    const credentials = await getProviderCredentials(providerId, excludeConnectionIds, fetchLockKey, { request });
 
     if (!credentials || credentials.allRateLimited) {
       if (credentials?.allRateLimited) {

@@ -1,3 +1,4 @@
+import { denyUnassignedPublicProvider } from "../services/connectionAccess.js";
 import {
   extractApiKey, isValidApiKey,
   getProviderCredentials, markAccountUnavailable, clearAccountError,
@@ -75,6 +76,8 @@ export async function handleStt(request) {
 
   // noAuth providers
   if (!CREDENTIALED_PROVIDERS.has(provider)) {
+    const accountDenied = await denyUnassignedPublicProvider(request);
+    if (accountDenied) return accountDenied;
     const result = await handleSttCore({ provider, model, formData, sttConfig: AI_PROVIDERS[provider]?.sttConfig, transport: modelTransport });
     if (result.success) return result.response;
     return errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, result.error || "STT failed");
@@ -86,7 +89,7 @@ export async function handleStt(request) {
   let lastStatus = null;
 
   while (true) {
-    let credentials = await getProviderCredentials(provider, excludeConnectionIds, model);
+    let credentials = await getProviderCredentials(provider, excludeConnectionIds, model, { request });
 
     if (!credentials || credentials.allRateLimited) {
       if (credentials?.allRateLimited) {

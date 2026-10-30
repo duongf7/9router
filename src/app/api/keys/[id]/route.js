@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { deleteApiKey, getApiKeyById, updateApiKey } from "@/lib/localDb";
 import { validateKeyAccessInput } from "@/shared/utils/keyAccess.js";
+import { validateAssignedAccounts } from "@/lib/validateConnectionAccess.js";
 
 // GET /api/keys/[id] - Get single key
 export async function GET(request, { params }) {
@@ -22,7 +23,7 @@ export async function PUT(request, { params }) {
   try {
     const { id } = await params;
     const body = await request.json();
-    const { isActive, access } = body;
+    const { isActive, access, connectionAccess } = body;
 
     const existing = await getApiKeyById(id);
     if (!existing) {
@@ -30,6 +31,11 @@ export async function PUT(request, { params }) {
     }
 
     const updateData = {};
+    if (connectionAccess !== undefined) {
+      const checked = await validateAssignedAccounts(connectionAccess);
+      if (!checked.ok) return NextResponse.json({ error: checked.error }, { status: 400 });
+      updateData.connectionAccess = checked.value;
+    }
     if (isActive !== undefined) updateData.isActive = isActive;
     if (access !== undefined) {
       const checked = validateKeyAccessInput(access);

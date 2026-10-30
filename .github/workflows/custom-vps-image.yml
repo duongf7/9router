@@ -1,0 +1,81 @@
+name: Custom VPS image
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: custom-vps-image
+  cancel-in-progress: false
+
+jobs:
+  image:
+    if: github.repository == 'duongf7/9router'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Identify source
+        id: source
+        run: |
+          echo "version=$(node -p 'require("./package.json").version')" >> "$GITHUB_OUTPUT"
+          echo "image=9router-custom:sha-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - name: Build VPS image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          tags: ${{ steps.source.outputs.image }}
+          outputs: type=docker,dest=${{ runner.temp }}/9router-image.tar
+          build-args: APP_VERSION=${{ steps.source.outputs.version }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.source.outputs.version }}
+          cache-from: type=gha,scope=custom-vps-amd64
+          cache-to: type=gha,mode=max,scope=custom-vps-amd64
+          provenance: false
+          sbom: false
+      - name: Verify packaged health and quota route
+        env:
+          IMAGE: ${{ steps.source.outputs.image }}
+        run: |
+          set -euo pipefail
+          docker load --input "$RUNNER_TEMP/9router-image.tar"
+          container="custom-9router-smoke-${GITHUB_RUN_ID}"
+          trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
+          docker run -d --name "$container" --network none "$IMAGE"
+          healthy=false
+          for attempt in {1..60}; do
+            if docker exec "$container" node -e "fetch('http://127.0.0.1:20128/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"; then
+              healthy=true
+              break
+            fi
+            sleep 2
+          done
+          if [ "$healthy" != true ]; then docker logs "$container"; exit 1; fi
+          docker exec "$container" node -e "fetch('http://127.0.0.1:20128/v1/quota').then(r=>{if(r.status!==401)throw new Error('Expected customer authentication');console.log('Quota route verified')}).catch(e=>{console.error(e.message);process.exit(1)})"
+          test "$(docker image inspect "$IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$GITHUB_SHA"
+      - name: Export verified image
+        env:
+          IMAGE: ${{ steps.source.outputs.image }}
+          VERSION: ${{ steps.source.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir "$RUNNER_TEMP/vps-image"
+          gzip -1 < "$RUNNER_TEMP/9router-image.tar" > "$RUNNER_TEMP/vps-image/9router-image.tar.gz"
+          cd "$RUNNER_TEMP/vps-image"
+          sha256sum 9router-image.tar.gz > SHA256SUMS
+          node -e 'const fs=require("fs");fs.writeFileSync("image.json",JSON.stringify({image:process.env.IMAGE,revision:process.env.GITHUB_SHA,version:process.env.VERSION},null,2))'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: custom-vps-image-${{ github.sha }}
+          path: ${{ runner.temp }}/vps-image/
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error

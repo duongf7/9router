@@ -46,12 +46,20 @@ afterEach(() => {
 });
 
 describe("apiKeys access columns: upgrade from the previous schema", () => {
+  it("preserves account assignments when bootstrapping from a JSON database", async () => {
+    fs.writeFileSync(path.join(tempDir, "db.json"), JSON.stringify({ apiKeys: [
+      { id: "json-key", key: "synthetic", connectionAccess: { restricted: true, allow: ["A"] } },
+    ] }));
+    const { db } = await boot();
+    expect((await db.getApiKeyById("json-key")).connectionAccess).toEqual({ restricted: true, allow: ["A"] });
+  });
   it("adds the columns, keeps every row, and reads every existing key as unrestricted", async () => {
     writeLegacyDb(tempDir);
     const { db, adapter } = await boot();
 
     const cols = adapter.all(`PRAGMA table_info(apiKeys)`).map((c) => c.name);
     expect(cols).toEqual(expect.arrayContaining(["accessRestricted", "accessAllow"]));
+    expect(cols).toEqual(expect.arrayContaining(["connectionAccessRestricted", "connectionAccessAllow"]));
 
     const keys = await db.getApiKeys();
     expect(keys.map((k) => [k.id, k.name, k.isActive, k.access])).toEqual([
@@ -60,10 +68,11 @@ describe("apiKeys access columns: upgrade from the previous schema", () => {
     ]);
     expect(await db.validateApiKey("sk-legacy-one")).toBe(true);
     expect((await db.getApiKeyByKey("sk-legacy-one")).access.restricted).toBe(false);
+    expect((await db.getApiKeyByKey("sk-legacy-one")).connectionAccess).toEqual({ restricted: false, allow: [] });
 
     // The schema bump took the pre-change safety backup.
     const backups = fs.readdirSync(path.join(tempDir, "db", "backups"));
-    expect(backups.some((d) => d.startsWith("schema-1-to-2"))).toBe(true);
+    expect(backups.some((d) => d.startsWith("schema-1-to-3"))).toBe(true);
   });
 
   it("persists access through update, new keys default to unrestricted", async () => {
@@ -77,8 +86,28 @@ describe("apiKeys access columns: upgrade from the previous schema", () => {
     expect((await db.getApiKeyById("k1")).access.restricted).toBe(true);
 
     const created = await db.createApiKey("fresh", "machine-1");
+    expect(created.connectionAccess).toEqual({ restricted: true, allow: [] });
     expect(created.access).toEqual({ restricted: false, allow: [] });
     expect((await db.getApiKeyById(created.id)).access).toEqual({ restricted: false, allow: [] });
+  });
+
+  it("round-trips account assignments and rejects a malformed scope without losing data", async () => {
+    writeLegacyDb(tempDir);
+    const { db, adapter } = await boot();
+    const scope = { restricted: true, allow: ["A", "B"] };
+    await db.updateApiKey("k1", { connectionAccess: scope });
+    await db.updateApiKey("k1", { isActive: false });
+    expect((await db.getApiKeyById("k1")).connectionAccess).toEqual(scope);
+    const dump = await db.exportDb();
+    await db.importDb(dump);
+    expect((await db.getApiKeyById("k1")).connectionAccess).toEqual(scope);
+    const bad = { ...dump, apiKeys: dump.apiKeys.map(k => ({ ...k, connectionAccess: null })) };
+    await expect(db.importDb(bad)).rejects.toThrow(/connectionAccess/);
+    expect((await db.getApiKeyById("k1")).connectionAccess).toEqual(scope);
+    adapter.run("UPDATE apiKeys SET connectionAccessAllow = ? WHERE id = ?", ["invalid-json", "k1"]);
+    expect((await db.getApiKeyById("k1")).connectionAccess).toEqual({ restricted: true, allow: [] });
+    await db.importDb({ ...dump, apiKeys: dump.apiKeys.map(({ connectionAccess, ...rest }) => rest) });
+    expect((await db.getApiKeyById("k1")).connectionAccess).toEqual({ restricted: false, allow: [] });
   });
 
   it("export/import round-trips access; a backup without access restores unrestricted; malformed access is refused", async () => {

@@ -4,7 +4,7 @@ import "open-sse/index.js";
 import { getProviderConnectionById } from "@/lib/localDb";
 import { consumeClaudeResetGrant } from "open-sse/services/usage.js";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
-import { refreshAndUpdateCredentials } from "../route.js";
+import { refreshAndUpdateCredentials } from "@/lib/usage/providerUsage.js";
 
 // Spend one free Claude "limit reset" grant (irreversible)
 export async function POST(request, { params }) {

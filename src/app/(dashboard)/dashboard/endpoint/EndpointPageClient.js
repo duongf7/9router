@@ -18,12 +18,18 @@ import EndpointRow from "./components/EndpointRow";
 import StatusAlert from "./components/StatusAlert";
 import Tooltip from "./components/Tooltip";
 import SecurityWarning from "./components/SecurityWarning";
+import ConnectionAccessEditor from "./components/ConnectionAccessEditor";
+import ConnectionAccessControls from "./components/ConnectionAccessControls";
+import KeyQuota from "./components/KeyQuota";
 import KeyAccessControls from "./components/KeyAccessControls";
 export default function APIPageClient({ machineId }) {
   const [keys, setKeys] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [newKeyName, setNewKeyName] = useState("");
+  const [newConnectionAccess, setNewConnectionAccess] = useState({ restricted: true, allow: [] });
+  const [keyError, setKeyError] = useState("");
+  const [creatingKey, setCreatingKey] = useState(false);
   const [createdKey, setCreatedKey] = useState(null);
   const [confirmState, setConfirmState] = useState(null);
 
@@ -262,7 +268,7 @@ export default function APIPageClient({ machineId }) {
           const createRes = await fetch("/api/keys", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name: "Default Key" }),
+            body: JSON.stringify({ name: "Default Key", connectionAccess: { restricted: false, allow: [] } }),
           });
           if (createRes.ok) existing = await fetchKeys();
         } catch { /* fall through to empty render */ }
@@ -616,25 +622,28 @@ export default function APIPageClient({ machineId }) {
   };
 
   const handleCreateKey = async () => {
-    if (!newKeyName.trim()) return;
+    if (!newKeyName.trim() || creatingKey) return;
+    setCreatingKey(true);
+    setKeyError("");
 
     try {
       const res = await fetch("/api/keys", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newKeyName }),
+        body: JSON.stringify({ name: newKeyName, connectionAccess: newConnectionAccess }),
       });
       const data = await res.json();
 
       if (res.ok) {
         setCreatedKey(data.key);
+        setNewConnectionAccess({ restricted: true, allow: [] });
         await fetchData();
         setNewKeyName("");
         setShowAddModal(false);
-      }
+      } else setKeyError(data.error || "Could not create key.");
     } catch (error) {
-      console.log("Error creating key:", error);
-    }
+      setKeyError("Could not create key. Please retry.");
+    } finally { setCreatingKey(false); }
   };
 
   const handleDeleteKey = async (id) => {
@@ -692,6 +701,17 @@ export default function APIPageClient({ machineId }) {
     } catch (error) {
       console.log("Error updating key access:", error);
     }
+  };
+
+  const handleUpdateConnectionAccess = async (id, connectionAccess) => {
+    const res = await fetch(`/api/keys/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ connectionAccess }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Could not save account access.");
+    setKeys(prev => prev.map(key => key.id === id ? data.key : key));
   };
 
   const maskKey = (fullKey) => {
@@ -1056,6 +1076,8 @@ export default function APIPageClient({ machineId }) {
                   {key.isActive === false && (
                     <p className="text-xs text-orange-500 mt-1">Paused</p>
                   )}
+                  <ConnectionAccessControls apiKey={key} onSave={access => handleUpdateConnectionAccess(key.id, access)} />
+                  <KeyQuota key={`${key.id}:${JSON.stringify(key.connectionAccess)}`} keyId={key.id} />
                   <KeyAccessControls
                     apiKey={key}
                     onChange={(access) => handleUpdateKeyAccess(key.id, access)}
@@ -1118,8 +1140,10 @@ export default function APIPageClient({ machineId }) {
             onChange={(e) => setNewKeyName(e.target.value)}
             placeholder="Production Key"
           />
+          {showAddModal && <ConnectionAccessEditor value={newConnectionAccess} onChange={setNewConnectionAccess} />}
+          {keyError && <p role="alert" className="text-sm text-red-500">{keyError}</p>}
           <div className="flex gap-2">
-            <Button onClick={handleCreateKey} fullWidth disabled={!newKeyName.trim()}>
+            <Button onClick={handleCreateKey} fullWidth disabled={!newKeyName.trim() || creatingKey || (newConnectionAccess.restricted && newConnectionAccess.allow.length === 0)}>
               Create
             </Button>
             <Button

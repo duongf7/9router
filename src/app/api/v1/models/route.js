@@ -1,3 +1,5 @@
+import { getConnectionAccess } from "@/sse/services/connectionAccess.js";
+import { permitsConnection } from "@/shared/utils/connectionAccess.js";
 import { PROVIDER_MODELS, PROVIDER_ID_TO_ALIAS, getModelKind } from "@/shared/constants/models";
 import {
   ALIAS_TO_ID,
@@ -323,13 +325,16 @@ export async function buildModelsList(kindFilter, options = {}) {
   // 9router instance's fetchCompatibleModelIds — skip dynamic fetch to break
   // cross-instance recursive loops.
   const skipDynamicFetch = options.skipDynamicFetch === true;
+  const accountAccess = await getConnectionAccess(options.request);
   let connections = [];
   try {
     connections = await getProviderConnections();
-    connections = connections.filter(c => c.isActive !== false);
+    connections = connections.filter(c => c.isActive !== false && permitsConnection(accountAccess, c.id));
   } catch (e) {
     console.log("Could not fetch providers, returning all models");
   }
+
+  if (accountAccess.restricted && connections.length === 0) return [];
 
   let combos = [];
   try {
@@ -369,7 +374,7 @@ export async function buildModelsList(kindFilter, options = {}) {
 
   // Include no-auth free providers (e.g. opencode) so their models are exposed in /v1/models
   for (const [id, provider] of Object.entries(FREE_PROVIDERS || {})) {
-    if (provider?.noAuth && !activeConnectionByProvider.has(id)) {
+    if (!accountAccess.restricted && provider?.noAuth && !activeConnectionByProvider.has(id)) {
       activeConnectionByProvider.set(id, {
         id: "noauth",
         provider: id,
@@ -666,7 +671,7 @@ export async function GET(request) {
     const skipDynamicFetch = request?.headers?.get(INTERNAL_MODELS_FETCH_HEADER) === "1";
     const data = await filterModelsListForKey(
       await getKeyAccessContext(request),
-      await buildModelsList([LLM_KIND], { skipDynamicFetch })
+      await buildModelsList([LLM_KIND], { skipDynamicFetch, request })
     );
     return Response.json({ object: "list", data }, {
       headers: { "Access-Control-Allow-Origin": "*" },

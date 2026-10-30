@@ -31,7 +31,9 @@ RUN --mount=type=cache,target=/root/.npm \
 
 COPY . ./
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN npm run build
+# Next's production compiler exceeded the default Node heap on this dashboard.
+# This applies only during the image build, not to the VPS runtime process.
+RUN NODE_OPTIONS=--max-old-space-size=4096 npm run build
 
 # https://github.com/decolua/9router/issues/5245
 # wreq-js and playwright-core are lazy runtime dependencies (loaded by
